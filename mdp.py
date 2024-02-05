@@ -7,7 +7,7 @@ class MDP:
 
     def step(self, action):
         raise NotImplementedError
-
+        
 
 class SimpleMDP(MDP):
     def __init__(self, n_states, n_actions, p, r, initial_state_distribution=None):
@@ -33,6 +33,22 @@ class SimpleMDP(MDP):
         reward = self.r[self.state, action]
         self.state = next_state
         return next_state, reward
+    
+
+class CTMDP(SimpleMDP):
+    def __init__(self, n_states, n_actions, p, r, holding_lambda,
+                 initial_state_distribution=None) -> None:
+        super().__init__(n_states, n_actions, p, r, initial_state_distribution)
+        self.holding_rate = np.asarray(holding_lambda)
+        assert self.holding_rate.shape == (n_states, n_actions)
+    
+    def step(self, action):
+        holding_time = np.random.exponential(1 / self.holding_rate[self.state, action])
+        next_state, reward = super().step(action)  
+        self.state = next_state
+        return next_state, reward, holding_time
+
+
 
 
 if __name__ == '__main__':
