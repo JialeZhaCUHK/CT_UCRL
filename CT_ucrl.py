@@ -63,11 +63,11 @@ def extended_value_iteration(n_states, n_actions, r, p_hat, confidence_bound_p,
 
                 # Optimistic holding rates
                 if q_sa > 0:
-                    rev_lambda_tilde = 1 / holding_rate_hat[st, ac] - confidence_bound_holding_time
-                    holding_rate_tilde[st, ac] = min(holding_rate_max, 1 / rev_lambda_tilde)
+                    inv_lambda_tilde = 1 / holding_rate_hat[st, ac] - confidence_bound_holding_time
+                    holding_rate_tilde[st, ac] = min(holding_rate_max, 1 / inv_lambda_tilde)
                 else:
-                    rev_lambda_tilde = 1 / holding_rate_hat[st, ac] + confidence_bound_holding_time
-                    holding_rate_tilde[st, ac] = max(holding_rate_min, 1 / rev_lambda_tilde)
+                    inv_lambda_tilde = 1 / holding_rate_hat[st, ac] + confidence_bound_holding_time
+                    holding_rate_tilde[st, ac] = max(holding_rate_min, 1 / inv_lambda_tilde)
 
                 # Optimistic uniformed Q-value
                 unif_q_sa = q_sa * holding_rate_tilde[st, ac] / holding_rate_max
@@ -86,19 +86,24 @@ def extended_value_iteration(n_states, n_actions, r, p_hat, confidence_bound_p,
     return pi_tilde, (p_tilde, holding_rate_tilde)
 
 
-def ct_ucrl(ct_mdp: CTMDP, delta, initial_state=None):
+def ct_ucrl(ct_mdp: CTMDP, holding_rate_max, holding_rate_min, r, delta, initial_state=None):
     '''
     CT_UCRL algorithm
     See _Logarithmic regret bounds for continuous-time average-reward Markov decision processes_ by Gao, X., & Zhou, X. Y. (2022)
     '''
     n_states, n_actions = ct_mdp.n_states, ct_mdp.n_actions
+    truncated_factor = np.sqrt(2 / np.log(1 / delta)) / holding_rate_min
+
+
     n = 1
     # Initial state
     st = ct_mdp.reset(initial_state)
     # Model estimates
     total_visitations = np.zeros((n_states, n_actions))
-    total_holding_time = np.zeros((n_states, n_actions))
     total_transitions = np.zeros((n_states, n_actions, n_states))
+    # total_holding_time = np.zeros((n_states, n_actions))
+    truncated_holding_time = np.zeros((n_states, n_actions))
+    # holding_rate_hat = np.zeros((n_states, n_actions))
     vi = np.zeros((n_states, n_actions))
     for k in itertools.count():
         # Initialize episode k
@@ -106,30 +111,38 @@ def ct_ucrl(ct_mdp: CTMDP, delta, initial_state=None):
         # Per-episode visitations
         vi = np.zeros((n_states, n_actions))
         # MLE estimates
-        p_hat = total_transitions / np.clip(total_visitations.reshape((n_states, n_actions, 1)), 1, None)
+        clip_visitations = np.clip(total_visitations, 1, None)
+        p_hat = total_transitions / clip_visitations.reshape((n_states, n_actions, 1))
         # print('p_hat', p_hat)
-        r_hat = total_rewards / np.clip(total_visitations, 1, None)
-        # print('r_hat', r_hat)
+        holding_rate_hat = truncated_holding_time / clip_visitations
 
         # Compute near-optimal policy for the optimistic MDP
-        confidence_bound_r = np.sqrt(7 * np.log(2 * n_states * n_actions * t_k / delta) / (2 * np.clip(total_visitations, 1, None)))
-        confidence_bound_p = np.sqrt(14 * np.log(2 * n_actions * t_k / delta) / np.clip(total_visitations, 1, None))
+        bound_de = np.sqrt(clip_visitations)
+        confidence_bound_p = np.sqrt(14 * np.log(2 * n_actions * t_k / delta))
+        confidence_bound_p /= bound_de
+        confidence_bound_holding_time = 4 * np.sqrt(14 * np.log(2 * n_states * n_actions * t_k / delta))
+        confidence_bound_holding_time /= bound_de * holding_rate_min
+        
         # print('cb_p', confidence_bound_p)
         # print('cb_r', confidence_bound_r)
-        pi_k, mdp_k = extended_value_iteration(n_states, n_actions, p_hat, confidence_bound_p, r_hat, confidence_bound_r, 1 / np.sqrt(t_k))
+        pi_k, mdp_k = extended_value_iteration(n_states, n_actions, r, p_hat, confidence_bound_p, 
+                                               holding_rate_hat, confidence_bound_holding_time, 
+                                               holding_rate_min, holding_rate_max, 1 / np.sqrt(t_k))
         # print(pi_k, mdp_k)
 
         # Execute policy
         ac = pi_k[st]
         # End episode when we visit one of the state-action pairs "often enough"
         while vi[st, ac] < max(1, total_visitations[st, ac]):
-            next_st, reward = mdp.step(ac)
+            next_st, reward, holding_time = ct_mdp.step(ac)
             # print('step', t, st, ac, next_st, reward)
             yield (t, st, ac, next_st, reward)
             # Update statistics
             vi[st, ac] += 1
-            total_rewards[st, ac] += reward
-            total_transitions[st, ac, next_st] += 1
+            total_transitions[st, ac, next_st] += 1            
+            if holding_time  <= np.sqrt(total_visitations[st, ac]) * truncated_factor:
+                truncated_holding_time[st, ac] += holding_time
+
             # Next tick
             n += 1
             st = next_st
@@ -142,23 +155,15 @@ if __name__ == '__main__':
     eps = 0.1
     alpha = 0.1
     n_states = n_actions = 2
-    p = [
-            [
-                [1, 0],
-                [1 - eps, eps]
-            ],
-            [
-                [0, 1],
-                [eps, 1 - eps]
-            ],
-         ]
-    r = [
-            [1 - alpha, 1 - alpha],
-            [1, 1],
-        ]
-    mdp = SimpleMDP(n_states, n_actions, p, r)
+    p = [[[0, 1],[0, 1]],
+         [[1, 0],[1, 0]]]
+    r = [[5, 8], [-4, -12]]
+    holding_lambda = [[3, 5], [2, 7]]
 
-    transitions = ucrl2(mdp, delta=0.1, initial_state=0)
+    ct_mdp = CTMDP(n_states, n_actions, p, r, )
+
+    transitions = ct_ucrl(ct_mdp, max(holding_lambda), min(holding_lambda),
+                          delta=0.05, initial_state=0)
     tr = []
     for _ in range(4000000):
         (t, st, ac, next_st, r) = transitions.__next__()
