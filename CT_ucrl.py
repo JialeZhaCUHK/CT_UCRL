@@ -30,7 +30,8 @@ def inner_maximization(p_sa_hat, confidence_bound_p_sa, rank):
     return p_sa
 
 
-def extended_value_iteration(n_states, n_actions, p_hat, confidence_bound_p, r_hat, confidence_bound_r, epsilon):
+def extended_value_iteration(n_states, n_actions, p_hat, confidence_bound_p, 
+                             r_hat, confidence_bound_r, epsilon):
     '''
     The extended value iteration which finds an optimistic MDP within the plausible set of MDPs and solves for its near-optimal policy.
     '''

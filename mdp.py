@@ -41,10 +41,15 @@ class CTMDP(SimpleMDP):
         super().__init__(n_states, n_actions, p, r, initial_state_distribution)
         self.holding_rate = np.asarray(holding_lambda)
         assert self.holding_rate.shape == (n_states, n_actions)
+
+        self.timer = 0
+        self.num_jump = 0
     
     def step(self, action):
         holding_time = np.random.exponential(1 / self.holding_rate[self.state, action])
-        next_state, reward = super().step(action)  
+        self.timer += holding_time
+        next_state, reward = super().step(action)
+        self.num_jump += 1  
         self.state = next_state
         return next_state, reward, holding_time
 
