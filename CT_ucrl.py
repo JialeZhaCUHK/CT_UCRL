@@ -17,6 +17,7 @@ def inner_maximization(p_sa_hat, confidence_bound_p_sa, rank):
         (n_states)-shaped float array. The optimistic transition p(.|s, a).
     '''
     # print('rank', rank)
+    # print(confidence_bound_p_sa)
     p_sa = np.array(p_sa_hat)
     p_sa[rank[0]] = min(1, p_sa_hat[rank[0]] + confidence_bound_p_sa / 2)
     rank_dup = list(rank)
@@ -31,7 +32,7 @@ def inner_maximization(p_sa_hat, confidence_bound_p_sa, rank):
 
 
 def extended_value_iteration(n_states, n_actions, r, p_hat, confidence_bound_p, 
-                             holding_rate_hat, confidence_bound_holding_time, 
+                             holding_time_hat, confidence_bound_holding_time, 
                              holding_rate_min, holding_rate_max, epsilon):
     '''
     The extended value iteration which finds an optimistic MDP within the plausible set of MDPs and solves for its near-optimal policy.
@@ -50,6 +51,7 @@ def extended_value_iteration(n_states, n_actions, r, p_hat, confidence_bound_p,
     while not (diff_value.max() - diff_value.min()) < epsilon:
         # Sort the states by their values in descending order
         rank = np.argsort(-state_value_hat)
+        # print(state_value_hat, rank)
         for st in range(n_states):
             best_ac, best_q = None, -math.inf
             for ac in range(n_actions):
@@ -62,12 +64,19 @@ def extended_value_iteration(n_states, n_actions, r, p_hat, confidence_bound_p,
                 p_tilde[st, ac] = p_sa_tilde
 
                 # Optimistic holding rates
+                inv_lambda_tilde = holding_time_hat[st, ac]
+
+
                 if q_sa > 0:
-                    inv_lambda_tilde = 1 / holding_rate_hat[st, ac] - confidence_bound_holding_time
-                    holding_rate_tilde[st, ac] = min(holding_rate_max, 1 / inv_lambda_tilde)
+                    inv_lambda_tilde -= confidence_bound_holding_time[st, ac]
+                    inv_lambda_tilde = max(1e-14, inv_lambda_tilde)
                 else:
-                    inv_lambda_tilde = 1 / holding_rate_hat[st, ac] + confidence_bound_holding_time
-                    holding_rate_tilde[st, ac] = max(holding_rate_min, 1 / inv_lambda_tilde)
+                    inv_lambda_tilde += confidence_bound_holding_time[st, ac]
+
+                
+                holding_rate_tilde[st, ac] = np.clip(1. / inv_lambda_tilde, 
+                                                     holding_rate_min,
+                                                     holding_rate_max)
 
                 # Optimistic uniformed Q-value
                 unif_q_sa = q_sa * holding_rate_tilde[st, ac] / holding_rate_max
@@ -82,8 +91,9 @@ def extended_value_iteration(n_states, n_actions, r, p_hat, confidence_bound_p,
         diff_value = next_state_value_hat - state_value_hat
         state_value_hat = next_state_value_hat
         next_state_value_hat = np.zeros(n_states)
-        # print('u', state_value_hat, du.max() - du.min(), epsilon)
-    return pi_tilde, (p_tilde, holding_rate_tilde)
+    # print(holding_rate_tilde)
+        # print('u', state_value_hat, diff_value.max() - diff_value.min(), epsilon)
+    return state_value_hat, pi_tilde, (p_tilde, holding_rate_tilde)
 
 
 def ct_ucrl(ct_mdp: CTMDP, holding_rate_max, holding_rate_min, r, delta, initial_state=None):
@@ -93,6 +103,7 @@ def ct_ucrl(ct_mdp: CTMDP, holding_rate_max, holding_rate_min, r, delta, initial
     '''
     n_states, n_actions = ct_mdp.n_states, ct_mdp.n_actions
     truncated_factor = np.sqrt(2 / np.log(1 / delta)) / holding_rate_min
+    # print(truncated_factor)
 
 
     n = 1
@@ -104,6 +115,8 @@ def ct_ucrl(ct_mdp: CTMDP, holding_rate_max, holding_rate_min, r, delta, initial
     # total_holding_time = np.zeros((n_states, n_actions))
     truncated_holding_time = np.zeros((n_states, n_actions))
     # holding_rate_hat = np.zeros((n_states, n_actions))
+    
+    # Current episode vistations
     vi = np.zeros((n_states, n_actions))
     for k in itertools.count():
         # Initialize episode k
@@ -114,19 +127,21 @@ def ct_ucrl(ct_mdp: CTMDP, holding_rate_max, holding_rate_min, r, delta, initial
         clip_visitations = np.clip(total_visitations, 1, None)
         p_hat = total_transitions / clip_visitations.reshape((n_states, n_actions, 1))
         # print('p_hat', p_hat)
-        holding_rate_hat = truncated_holding_time / clip_visitations
+        holding_time_hat = truncated_holding_time / clip_visitations
+        # print(holding_time_hat)
 
         # Compute near-optimal policy for the optimistic MDP
         bound_de = np.sqrt(clip_visitations)
-        confidence_bound_p = np.sqrt(14 * np.log(2 * n_actions * t_k / delta))
+        confidence_bound_p = np.sqrt(14 * n_states * np.log(2 * n_actions * t_k / delta))
         confidence_bound_p /= bound_de
         confidence_bound_holding_time = 4 * np.sqrt(14 * np.log(2 * n_states * n_actions * t_k / delta))
         confidence_bound_holding_time /= bound_de * holding_rate_min
+        # print(confidence_bound_holding_time)
         
         # print('cb_p', confidence_bound_p)
         # print('cb_r', confidence_bound_r)
-        pi_k, mdp_k = extended_value_iteration(n_states, n_actions, r, p_hat, confidence_bound_p, 
-                                               holding_rate_hat, confidence_bound_holding_time, 
+        _, pi_k, _ = extended_value_iteration(n_states, n_actions, r, p_hat, confidence_bound_p, 
+                                               holding_time_hat, confidence_bound_holding_time, 
                                                holding_rate_min, holding_rate_max, 1 / np.sqrt(t_k))
         # print(pi_k, mdp_k)
 
@@ -136,17 +151,18 @@ def ct_ucrl(ct_mdp: CTMDP, holding_rate_max, holding_rate_min, r, delta, initial
         while vi[st, ac] < max(1, total_visitations[st, ac]):
             next_st, reward, holding_time = ct_mdp.step(ac)
             # print('step', t, st, ac, next_st, reward)
-            yield (t, st, ac, next_st, reward)
+            yield (n, st, ac, next_st, reward)
             # Update statistics
             vi[st, ac] += 1
             total_transitions[st, ac, next_st] += 1            
-            if holding_time  <= np.sqrt(total_visitations[st, ac]) * truncated_factor:
+            if holding_time  <= np.sqrt(total_visitations[st, ac] + vi[st, ac]) * truncated_factor:
                 truncated_holding_time[st, ac] += holding_time
 
             # Next tick
             n += 1
             st = next_st
             ac = pi_k[st]
+            # print(vi)
 
         total_visitations += vi
 
