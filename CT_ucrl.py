@@ -170,13 +170,16 @@ def ct_ucrl(ct_mdp: CTMDP, holding_rate_max, holding_rate_min, r, delta, initial
 if __name__ == '__main__':
     eps = 0.1
     alpha = 0.1
-    n_states = n_actions = 2
-    p = [[[0, 1],[0, 1]],
-         [[1, 0],[1, 0]]]
-    r = [[5, 8], [-4, -12]]
-    holding_lambda = [[3, 5], [2, 7]]
+    n_actions = 2
 
-    ct_mdp = CTMDP(n_states, n_actions, p, r, )
+    # Two-state example
+    n_states = 2
+    p = np.array([[[0, 1],[0, 1]],
+         [[1, 0],[1, 0]]])
+    r = np.array([[5, 8], [-4, -12]])
+    holding_lambda = np.array([[3, 5], [2, 7]])
+
+    ct_mdp = CTMDP(n_states, n_actions, p, r, holding_lambda, 0)
 
     transitions = ct_ucrl(ct_mdp, max(holding_lambda), min(holding_lambda),
                           delta=0.05, initial_state=0)
