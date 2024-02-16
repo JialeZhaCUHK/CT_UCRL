@@ -91,7 +91,7 @@ def extended_value_iteration(n_states, n_actions, r, p_hat, confidence_bound_p,
         diff_value = next_state_value_hat - state_value_hat
         state_value_hat = next_state_value_hat
         next_state_value_hat = np.zeros(n_states)
-    # print(holding_rate_tilde)
+    # print(holding_rate_tilde, pi_tilde, p_sa_tilde)
         # print('u', state_value_hat, diff_value.max() - diff_value.min(), epsilon)
     return state_value_hat, pi_tilde, (p_tilde, holding_rate_tilde)
 
@@ -151,7 +151,7 @@ def ct_ucrl(ct_mdp: CTMDP, holding_rate_max, holding_rate_min, r, delta, initial
         while vi[st, ac] < max(1, total_visitations[st, ac]):
             next_st, reward, holding_time = ct_mdp.step(ac)
             # print('step', t, st, ac, next_st, reward)
-            yield (n, st, ac, next_st, reward)
+            yield (n, st, ac, next_st, holding_time, reward)
             # Update statistics
             vi[st, ac] += 1
             total_transitions[st, ac, next_st] += 1            
